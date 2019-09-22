@@ -57,12 +57,13 @@ Module.register('MMM-BackgroundSlideshow', {
     this.config.validImageFileExtensions = this.config.validImageFileExtensions.toLowerCase();
     // set no error
     this.errorMessage = null;
-    if (this.config.imagePaths.length == 0) {
-      this.errorMessage =
-        'MMM-BackgroundSlideshow: Missing required parameter.';
+    if (this.config.imagePaths.length == 0 && !this.config.plexToken) {
+      this.errorMessage = 'MMM-BackgroundSlideshow: Missing required parameter.';
     } else {
       // create an empty image list
       this.imageList = [];
+      this.plexUrl = '';
+      this.plexToken = '';
       // set beginning image index to 0, as it will auto increment on start
       this.imageIndex = 0;
       this.updateImageList();
@@ -81,7 +82,6 @@ Module.register('MMM-BackgroundSlideshow', {
   // generic notification handler
   notificationReceived: function(notification, payload, sender) {
     if (sender) {
-      Log.log(this.name + " received a module notification: " + notification + " from sender: " + sender.name);
       if(notification === 'BACKGROUNDSLIDESHOW_IMAGE_UPDATE'){
         Log.log("MMM-BackgroundSlideshow: Changing Background");
         this.suspend();
@@ -93,7 +93,6 @@ Module.register('MMM-BackgroundSlideshow', {
         if(this.timer){   // Restart timer only if timer was already running
           this.resume();  
         }
-
       }
       else if (notification === 'BACKGROUNDSLIDESHOW_PLAY'){ // Change to next image and start timer.
         this.updateImage();
@@ -113,9 +112,10 @@ Module.register('MMM-BackgroundSlideshow', {
     if (notification === 'BACKGROUNDSLIDESHOW_FILELIST') {
       // check this is for this module based on the woeid
       if (payload.identifier === this.identifier) {
-        // console.info('Returning Images, payload:' + JSON.stringify(payload));
         // set the image list
         this.imageList = payload.imageList;
+        this.plexUrl = payload.plexUrl;
+        this.plexToken = payload.plexToken;
         // if image list actually contains images
         // set loaded flag to true and update dom
         if (this.imageList.length > 0) {
@@ -178,35 +178,45 @@ Module.register('MMM-BackgroundSlideshow', {
         var div1 = this.div1;
         var div2 = this.div2;
 
-
         var image = new Image();
         image.onload = function() {
-			div1.style.backgroundImage = "url('" + this.src + "')";
-			div1.style.opacity = '1';
-			div1.style.transform="rotate(0deg)";			  
-			EXIF.getData(image, function() {	
-				var Orientation = EXIF.getTag(this, "Orientation");
-				if (Orientation != null) {
-					// console.info('Updating image, orientation:' + Orientation);
-					if (Orientation == 6) {
-						// console.info('Updating rotation to 90deg');
-						div1.style.transform="rotate(90deg)";
-					}
-					else
-						if (Orientation == 8) {
-						// console.info('Updating rotation to -90deg');
-						div1.style.transform="rotate(-90deg)";
-						}
-					}
-				}
-			)
- 		  
+          div1.style.backgroundImage = "url('" + this.src + "')";
+          div1.style.opacity = '1';
+          div1.style.transform="rotate(0deg)";			  
+          EXIF.getData(image, function() {	
+            var Orientation = EXIF.getTag(this, "Orientation");
+            if (Orientation != null) {
+              if (Orientation == 6) {
+                div1.style.transform="rotate(90deg)";
+              }
+              else
+                if (Orientation == 8) {
+                div1.style.transform="rotate(-90deg)";
+                }
+              }
+            }
+          )
+          
           div2.style.opacity = '0';
         };
-        image.src = encodeURI(this.imageList[this.imageIndex]);
-        this.sendNotification('BACKGROUNDSLIDESHOW_IMAGE_UPDATED', {url:image.src});
-		    // console.info('Updating image, source:' + image.src);
-        this.imageIndex += 1;
+
+        if (this.plexToken) {
+          var xhr = new XMLHttpRequest();
+          xhr.responseType = 'blob';
+          xhr.onreadystatechange = function () {
+              if (xhr.readyState == XMLHttpRequest.DONE && xhr.status == 200) {
+                  image.src = URL.createObjectURL(xhr.response);
+                  this.imageIndex += 1;
+              }
+          };
+
+          xhr.open('GET', `${this.plexUrl}${this.imageList[this.imageIndex]}`, true);
+          xhr.setRequestHeader('X-Plex-Token', this.plexToken);
+          xhr.send();
+        } else {
+          image.src = encodeURI(this.imageList[this.imageIndex]);
+          this.imageIndex += 1;
+        }
       } else {
         this.imageIndex = 0;
         this.updateImageList();

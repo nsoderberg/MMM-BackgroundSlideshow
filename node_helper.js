@@ -15,6 +15,7 @@
 // call in the required classes
 var NodeHelper = require('node_helper');
 var FileSystemImageSlideshow = require('fs');
+var request = require('request');
 
 // the main module helper create
 module.exports = NodeHelper.create({
@@ -51,20 +52,59 @@ module.exports = NodeHelper.create({
     }
     return false;
   },
+  getPlexImagesFromAlbum(url, token, albumId, cb) {
+    var options = {
+      url: `${url}/playlists/${albumId}/items`,
+      method: 'GET',
+      headers: { 
+        'X-Plex-Token': token,
+        'Accept': 'application/json'
+      },
+      json:true
+    };
+
+    request(options, function(error, response, body) {
+      if (error || response.statusCode !== 200) {
+        console.log(`error fetching plex metadata: ${response.statusCode}: ${error}`);
+        cb([]);
+      }
+
+      imageUrls = [];
+      items = body.MediaContainer.Metadata;
+
+      for(var i = 0; i < items.length; i++) {
+        imageUrls.push(items[i].Media[0].Part[0].key);
+      }
+
+      cb(imageUrls);
+    });
+  },
   // gathers the image list
-  gatherImageList: function(config) {
-    var self = this;
+  gatherImageList(config, cb) {
+    const self = this;
     // create an empty main image list
     var imageList = [];
-    for (var i = 0; i < config.imagePaths.length; i++) {
-      this.getFiles(config.imagePaths[i], imageList, config);
+
+    if (config.plexToken) {
+      self.getPlexImagesFromAlbum(
+        config.plexUrl, 
+        config.plexToken, 
+        config.plexAlbum,
+        function(images) {
+          const imageList = config.randomizeImageOrder ? self.shuffleArray(images) : images.sort(self.sortByFilename);
+          cb(imageList); 
+        });
+    } else {
+      for (var i = 0; i < config.imagePaths.length; i++) {
+        self.getFiles(config.imagePaths[i], imageList, config);
+      }
+
+      imageList = config.randomizeImageOrder
+        ? self.shuffleArray(imageList)
+        : imageList.sort(self.sortByFilename);
+
+      cb(imageList);
     }
-
-    imageList = config.randomizeImageOrder
-      ? this.shuffleArray(imageList)
-      : imageList.sort(this.sortByFilename);
-
-    return imageList;
   },
 
   getFiles(path, imageList, config) {
@@ -84,22 +124,26 @@ module.exports = NodeHelper.create({
     }
   },
   // subclass socketNotificationReceived, received notification from module
-  socketNotificationReceived: function(notification, payload) {
+  socketNotificationReceived: function(notification, configuration) {
     if (notification === 'BACKGROUNDSLIDESHOW_REGISTER_CONFIG') {
       // this to self
       var self = this;
       // get the image list
-      var imageList = this.gatherImageList(payload);
-      // build the return payload
-      var returnPayload = {
-        identifier: payload.identifier,
-        imageList: imageList
-      };
-      // send the image list back
-      self.sendSocketNotification(
-        'BACKGROUNDSLIDESHOW_FILELIST',
-        returnPayload
-      );
+      this.gatherImageList(configuration, function(imageList) {
+        // build the return payload
+        var returnPayload = {
+          identifier: configuration.identifier,
+          imageList: imageList,
+          plexUrl: configuration.plexUrl,
+          plexToken: configuration.plexToken
+        };
+
+        // send the image list back
+        self.sendSocketNotification(
+          'BACKGROUNDSLIDESHOW_FILELIST',
+          returnPayload
+        );
+      });
     }
   }
 });
